@@ -1,184 +1,113 @@
-local flux = require("flux")
-
-io.stdout:setvbuf('no')
-
-local game_w, game_h = 1280, 720
-local scale = 1
-local offsetX, offsetY = 0, 0
-
-local backgrounds = {}
-local currentBackground
-
-local bgOffsetX, bgOffsetY = 0, 0
-local bgSpeed = 50
-
-local gameFont
-
-local settingsPanel = {y = game_h}
-local settingsOpen = false
-local settingsH = 600
-local settingsW = 400
-
+local scaling = require("lib.scaling")
+local background = require("lib.background")
+local animation = require("lib.animation")
+local ui = require("lib.ui")
+local cards = require("lib.cards")
+local audio = require("lib.audio")
+local screen = require("lib.screen")
 
 function love.load()
-    love.window.setMode(game_w, game_h, {resizable = true, minwidth = 640, minheight = 360})
+    -- scaling
+    scaling.init(1280, 720)
 
-    backgrounds.classic = love.graphics.newImage("assets/backgrounds/ClassicBackground.png")
-    backgrounds.art = love.graphics.newImage("assets/backgrounds/ArtDecoBackground.png")
-    
-    -- sets wrapping for each image in backgrounds 
-    for x, bg in pairs(backgrounds) do
-        bg:setWrap("repeat", "repeat")
+    -- fonts
+    ui.loadFont("small", "assets/fonts/BoldPixels.ttf", 32)
+    ui.loadFont("menu", "assets/fonts/BoldPixels.ttf", 48)
+    ui.loadFont("title", "assets/fonts/BoldPixels.ttf", 80)
+    ui.setFont("small")
+
+    -- backgrounds
+    background.load("classic", "assets/backgrounds/ClassicBackground.png")
+    background.load("art", "assets/backgrounds/ArtDecoBackground.png")
+
+    -- card spritesheets
+    cards.loadSheet("classic", "assets/cards/front/ClassicCards.png", "assets/cards/front/ClassicJokers.png")
+    cards.loadBack("classic", "assets/cards/back/LightClassic.png")
+
+    cards.loadSheet("classicDark", "assets/cards/front/ClassicCardsDark.png", "assets/cards/front/ClassicDarkJokers.png")
+    cards.loadBack("classicDark", "assets/cards/back/DarkClassic.png")
+
+    -- audio (safe-load: missing files are ignored)
+    audio.loadSound("button", "assets/audio/button.ogg")
+    audio.loadSound("card1", "assets/audio/card1.ogg")
+    audio.loadSound("card3", "assets/audio/card3.ogg")
+    audio.loadSound("foil2", "assets/audio/foil2.ogg")
+    audio.loadSound("cancel", "assets/audio/cancel.ogg")
+    audio.loadSound("cardFan2", "assets/audio/cardFan2.ogg")
+    audio.loadSound("multihit1", "assets/audio/multhit1.ogg")
+    audio.loadSound("multhit2", "assets/audio/multhit2.ogg")
+    audio.loadSound("negative", "assets/audio/negative.ogg")
+    audio.loadSound("win", "assets/audio/win.ogg")
+    audio.loadSound("paper1", "assets/audio/paper1.ogg")
+    audio.loadSound("other1", "assets/audio/other1.ogg")
+    for i = 1, 6 do
+        audio.loadSound("glass" .. i, "assets/audio/glass" .. i .. ".ogg")
     end
-    currentBackground = backgrounds.classic
-    
-    updateScale()
 
-    gameFont = love.graphics.newFont("assets/fonts/BoldPixels.ttf", 32)
-    love.graphics.setFont(gameFont)
+    for i = 1, 5 do
+        audio.loadSound("crumple" .. i, "assets/audio/crumple" .. i .. ".ogg")
+    end
+    for i = 1, 2 do
+        audio.loadSound("cardslide" .. i, "assets/audio/cardslide" .. i .. ".ogg")
+    end
+    for i = 1, 7 do
+        audio.loadSound("coin" .. i, "assets/audio/coin" .. i .. ".ogg")
+    end
+    for i = 1, 11 do
+        audio.loadSound("voice" .. i, "assets/audio/voice" .. i .. ".ogg")
+    end
 
-    -- load buttons
-    settingsBtn = makeButton("Settings", 10, game_h - 64)
+    audio.definePool("uiClick", {"button"})
+    audio.definePool("cardMove", {"card1", "card3"})
+    audio.definePool("play", {"multihit1"})
+    audio.definePool("jackActivate", {"multhit2"})
+    audio.definePool("flip", {"cardFan2"})
+    audio.definePool("burn", {"crumple1", "crumple2", "crumple3", "crumple4", "crumple5"})
+    audio.definePool("joker", {"foil2"})
+    audio.definePool("hit", {"cardslide1", "cardslide2"})
+    audio.definePool("buy", {"coin1", "coin2", "coin3", "coin4", "coin5", "coin6", "coin7"})
+    audio.definePool("invalid", {"negative"})
+    audio.definePool("queenBlock", {"cancel"})
+    audio.definePool("highDamage", {"glass1", "glass2", "glass3", "glass4", "glass5", "glass6"})
+    audio.definePool("voiceTick", {"voice1", "voice2", "voice3", "voice4", "voice5", "voice6", "voice7", "voice8", "voice9", "voice10", "voice11"})
+
+    -- register screens
+    screen.register("menu", require("screens.menu"))
+    screen.register("game", require("screens.game"))
+    screen.register("store", require("screens.store"))
+    screen.register("death", require("screens.death"))
+
+    -- start at menu
+    screen.switch("menu")
 end
 
-
-
--- resize utility
 function love.resize(w, h)
-    updateScale()
+    scaling.update()
 end
-
--- resized screenlocation utility
-function screenToGame(x, y)
-    return (x - offsetX) / scale, (y - offsetY) / scale
-end
-
--- generic hit utility
-function pointInRect(px, py, rect)
-    return px >= rect.x and px <= rect.x + rect.w
-       and py >= rect.y and py <= rect.y + rect.h
-end
-
--- button size utility
-function makeButton(text, x, y, padding)
-    padding = padding or 8
-    return {
-        text = text,
-        x = x,
-        y = y,
-        w = gameFont:getWidth(text) + padding * 2,
-        h = gameFont:getHeight() + padding * 2,
-        padding = padding,
-        scale = 1,
-        rotation = 0,
-        hovered = false
-    }
-end
-
--- button draw utility
-function drawButton(btn)
-    local cx = btn.x + btn.w / 2
-    local cy = btn.y + btn.h / 2
-    
-    love.graphics.push()
-    love.graphics.translate(cx, cy)
-    love.graphics.rotate(btn.rotation)
-    love.graphics.scale(btn.scale)
-    love.graphics.translate(-cx, -cy)
-    
-    love.graphics.setColor(0.2, 0.2, 0.2, 0.8)
-    love.graphics.rectangle("fill", btn.x, btn.y, btn.w, btn.h, 4, 4)
-    love.graphics.setColor(1, 1, 1, 1)
-    love.graphics.print(btn.text, btn.x + btn.padding, btn.y + btn.padding)
-    
-    love.graphics.pop()
-end
-
-
-
--- draw settings
-function drawSettings()
-    local sx = (game_w - settingsW) / 2
-
-    love.graphics.setColor(0.1, 0.1, 0.1, 0.9)
-    love.graphics.rectangle("fill", sx, settingsPanel.y, settingsW, settingsH, 8, 8)
-    love.graphics.setColor(1, 1, 1, 1)
-end
-
-
-
--- update screendimensions
-function updateScale()
-    local w, h = love.graphics.getDimensions()
-    scale = math.min(w / game_w, h / game_h)
-    offsetX = (w - game_w * scale) / 2
-    offsetY = (h - game_h * scale) / 2
-end
-
--- update hover
-function updateButtonHover(btn)
-    local mx, my = love.mouse.getPosition()
-    local gx, gy = screenToGame(mx, my)
-    local isHovered = pointInRect(gx, gy, btn)
-    
-    if isHovered and not btn.hovered then
-        btn.hovered = true
-        flux.to(btn, 0.3, {scale = 1.1, rotation = 0.02}):ease("backout")
-    elseif not isHovered and btn.hovered then
-        btn.hovered = false
-        flux.to(btn, 0.3, {scale = 1, rotation = 0}):ease("cubicout")
-    end
-end
-
-
-
-function love.mousepressed(x, y, button)
-    local gx, gy = screenToGame(x, y)
-    local settingsTargetY = (game_h - settingsH) / 2
-
-    if pointInRect(gx, gy, settingsBtn) then
-        settingsOpen = not settingsOpen
-        local target = settingsOpen and settingsTargetY or game_h
-        flux.to(settingsPanel, 0.4, {y = target}):ease("cubicout")
-    end
-end
-
-
 
 function love.update(dt)
-    -- update libraries
-    flux.update(dt)
-
-    updateButtonHover(settingsBtn)
-
-
-    bgOffsetX = bgOffsetX + bgSpeed * dt
-    bgOffsetY = bgOffsetY + bgSpeed * dt
-
-
+    animation.update(dt)
+    screen.update(dt)
 end
 
-
-
 function love.draw()
-    love.graphics.clear(0, 0, 0)
-    love.graphics.setScissor(offsetX, offsetY, game_w * scale, game_h * scale)
-    
-    love.graphics.translate(offsetX, offsetY)
-    love.graphics.scale(scale)
+    scaling.beginDraw()
+    screen.draw()
+    scaling.endDraw()
+end
 
-    -- background tiling
-    local iw, ih = currentBackground:getDimensions()
-    bgOffsetX = bgOffsetX % iw
-    bgOffsetY = bgOffsetY % ih
-    for x = -iw, game_w, iw do
-        for y = -ih, game_h, ih do
-            love.graphics.draw(currentBackground, x + bgOffsetX, y + bgOffsetY)
-        end
-    end
+function love.mousepressed(x, y, button)
+    screen.mousepressed(x, y, button)
+end
 
-    drawButton(settingsBtn)
-    drawSettings()
-    
-    love.graphics.setScissor()
+function love.mousereleased(x, y, button)
+    screen.mousereleased(x, y, button)
+end
+
+function love.keypressed(key)
+    screen.keypressed(key)
+end
+
+function love.keyreleased(key)
+    screen.keyreleased(key)
 end
